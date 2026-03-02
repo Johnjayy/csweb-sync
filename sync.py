@@ -6,9 +6,7 @@ from arcgis.gis import GIS
 from arcgis.features import FeatureLayer, Feature
 from arcgis.geometry import Point
 
-
 def sync_to_arcgis():
-
     # ---------------------------------------------------
     # 1. CONNECT TO ARCGIS ONLINE
     # ---------------------------------------------------
@@ -39,7 +37,7 @@ def sync_to_arcgis():
     print(f"Total active cases found: {len(rows)}")
 
     # ---------------------------------------------------
-    # 4. DECOMPRESS
+    # 4. DECOMPRESS & LOG SKIP REASONS
     # ---------------------------------------------------
     def decompress_case(blob):
         raw = bytes(blob)
@@ -52,74 +50,79 @@ def sync_to_arcgis():
             decompressed = decompress_case(row[2])
             data = json.loads(decompressed.decode("utf-8"))
 
-            case = {
-                "db_id": row[0],
-                "STATE_ID": data.get("QUESTIONS_REC", {}).get("STATE_ID", ""),
-                "LGA_ID": data.get("QUESTIONS_REC", {}).get("LGA_ID", ""),
-                "GPS_LAT": data.get("COORDINATE", {}).get("GPS_LAT", None),
-                "GPS_LON": data.get("COORDINATE", {}).get("GPS_LON", None),
-            }
+            lat = data.get("COORDINATE", {}).get("GPS_LAT", None)
+            lon = data.get("COORDINATE", {}).get("GPS_LON", None)
+            state_id = data.get("QUESTIONS_REC", {}).get("STATE_ID", "")
+            lga_id = data.get("QUESTIONS_REC", {}).get("LGA_ID", "")
 
-            parsed_cases.append(case)
+            # Log every case with its GPS status
+            if lat is None or lon is None:
+                print(f"  ⚠ Case ID {row[0]} (caseids={row[1]}) — SKIPPED: No GPS coordinates (LAT={lat}, LON={lon})")
+            else:
+                print(f"  ✓ Case ID {row[0]} (caseids={row[1]}) — OK: LAT={lat}, LON={lon}, STATE={state_id}, LGA={lga_id}")
+
+            parsed_cases.append({
+                "db_id": row[0],
+                "STATE_ID": state_id,
+                "LGA_ID": lga_id,
+                "GPS_LAT": lat,
+                "GPS_LON": lon,
+            })
 
         except Exception as e:
-            print(f"Skipping case {row[0]}: {e}")
+            print(f"  ✗ Case ID {row[0]} (caseids={row[1]}) — SKIPPED: Decompress/parse error: {e}")
 
     # ---------------------------------------------------
     # 5. BUILD FEATURES
     # ---------------------------------------------------
     features = []
-
     for case in parsed_cases:
         lat = case.get("GPS_LAT")
         lon = case.get("GPS_LON")
-
         if lat is None or lon is None:
             continue
+        try:
+            geometry = Point({
+                "x": float(lon),
+                "y": float(lat),
+                "spatialReference": {"wkid": 4326}
+            })
+            attributes = {
+                "state_id": case["STATE_ID"],
+                "lga_id": case["LGA_ID"],
+            }
+            features.append(Feature(geometry=geometry, attributes=attributes))
+        except Exception as e:
+            print(f"  ✗ Case ID {case['db_id']} — SKIPPED: Geometry error: {e}")
 
-        geometry = Point({
-            "x": float(lon),
-            "y": float(lat),
-            "spatialReference": {"wkid": 4326}
-        })
-
-        attributes = {
-            "state_id": case["STATE_ID"],
-            "lga_id": case["LGA_ID"],
-        }
-
-        features.append(Feature(geometry=geometry, attributes=attributes))
-
-    print(f"Features ready: {len(features)}")
+    print(f"Features ready to upload: {len(features)}")
 
     # ---------------------------------------------------
     # 6. UPLOAD
     # ---------------------------------------------------
     if features:
         flayer.delete_features(where="1=1")
-
         result = flayer.edit_features(adds=features)
-        print("Upload result:", result)
-
+        success = sum(1 for r in result.get("addResults", []) if r.get("success"))
+        failed = len(result.get("addResults", [])) - success
+        print(f"Upload complete — Success: {success}, Failed: {failed}")
     else:
-        print("No features to upload.")
-
+        print("No features with GPS to upload.")
 
 # ---------------------------------------------------
-# LOOP (THIS IS THE NEW PART)
+# MAIN LOOP — runs every 60 seconds
 # ---------------------------------------------------
-
 def main():
+    print("=== CSWeb → ArcGIS Sync Service Started ===")
     while True:
         try:
-            print("\n--- Running Sync ---")
+            print(f"\n--- Running Sync ---")
             sync_to_arcgis()
             print("--- Sync Finished ---")
         except Exception as e:
-            print("ERROR:", e)
-
-        time.sleep(60)  # Wait 60 seconds
-
+            print(f"ERROR during sync: {e}")
+        print("Waiting 60 seconds...")
+        time.sleep(60)
 
 if __name__ == "__main__":
     main()
