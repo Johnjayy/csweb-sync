@@ -21,7 +21,7 @@ def sync_to_arcgis():
     # 2. CONNECT TO MYSQL
     # ---------------------------------------------------
     print("Connecting to MySQL...")
-    engine = create_engine("mysql+pymysql://root:PJJWurMTBNsJEZoKbungZKfUjAxkLStR@tramway.proxy.rlwy.net:17273/csweb")
+    engine = create_engine("mysql+pymysql://root:PhcvfayhkDYbLZFiHcQYHliOwzDOAJVA@caboose.proxy.rlwy.net:15224/railway")
     print("Connected to MySQL ✓")
 
     # ---------------------------------------------------
@@ -126,3 +126,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
